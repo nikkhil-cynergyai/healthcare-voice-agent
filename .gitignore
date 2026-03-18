@@ -1,0 +1,66 @@
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.*
+
+# Dependency directories
+node_modules/
+vendor/
+
+# Build folders
+dist/
+build/
+out/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Coverage
+coverage/
+
+# Mac system files
+.AppleDouble
+.LSOverride
+
+# Windows system files
+ehthumbs.db
+Desktop.ini
+
+# Python virtual environments
+.venv/
+venv/
+.venv311/
+
+# Python cache
+__pycache__/
+*.pycvenv/
+.venv/
+.venv311/
+piper_models/*.onnx
+piper_models/*.onnx
+
+piper_models/
+piper_models/*.onnx
+piper_models/*.onnx
