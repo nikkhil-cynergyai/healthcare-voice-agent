@@ -16,12 +16,12 @@ yarn-error.log*
 # Dependency directories
 node_modules/
 vendor/
-
+piper_models
 # Build folders
 dist/
 build/
 out/
-
+audio/
 # IDE / Editor files
 .vscode/
 .idea/

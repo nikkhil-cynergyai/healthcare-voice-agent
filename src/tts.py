@@ -23,7 +23,7 @@ from .config import AUDIO_OUTPUT_DIR
 # Listen to samples: https://rhasspy.github.io/piper-samples/
 # ─────────────────────────────────────────
 
-_VOICE_NAME = "en_US-lessac-high"
+_VOICE_NAME  = "en_US-lessac-medium"
 _MODELS_DIR  = "piper_models"
 _MODEL_PATH  = os.path.join(_MODELS_DIR, f"{_VOICE_NAME}.onnx")
 
