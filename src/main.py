@@ -222,11 +222,10 @@ async def media_stream(websocket: WebSocket):
                             await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio}"))
                             continue
 
-                        # Filler immediately
-                        if _filler_urls:
-                            await _update_call(call_sid, twiml_play_and_stream(random.choice(_filler_urls)))
-
-                        asyncio.create_task(_generate_and_reply(call_sid, user_text, t))
+                        # Smart filler — play only if LLM takes >3s
+                        asyncio.create_task(
+                            _smart_reply(call_sid, user_text, t)
+                        )
 
             elif event == "stop":
                 print(f"[WS] Stream stopped: {call_sid}")
@@ -236,6 +235,48 @@ async def media_stream(websocket: WebSocket):
         print(f"[WS] Disconnected: {call_sid}")
     except Exception as e:
         print(f"[WS] Error: {e}")
+
+
+async def _smart_reply(call_sid: str, user_text: str, t: Timer):
+    """
+    Smart filler logic:
+    - Start LLM immediately
+    - If LLM + TTS done within 3s → play reply directly (no filler)
+    - If LLM + TTS takes >3s → play filler first, then reply
+    """
+    session = get_session(call_sid)
+    session["history"].append(f"Patient: {user_text}")
+
+    # Start LLM in background
+    t.start("LLM")
+    llm_task = asyncio.create_task(
+        asyncio.to_thread(generate_response, user_text, session["history"])
+    )
+
+    # Wait up to 3s for LLM
+    filler_played = False
+    try:
+        reply = await asyncio.wait_for(asyncio.shield(llm_task), timeout=3.0)
+    except asyncio.TimeoutError:
+        # LLM taking too long — play filler now
+        if _filler_urls:
+            filler_played = True
+            await _update_call(call_sid, twiml_play_and_stream(random.choice(_filler_urls)))
+            print(f"[Filler] Played — LLM slow (>3s)")
+        # Wait for LLM to finish
+        reply = await llm_task
+
+    t.end("LLM")
+
+    session["history"].append(f"Sarah: {reply}")
+    print(f"[LLM] Reply: '{reply}'")
+
+    t.start("TTS")
+    audio_path = await asyncio.to_thread(synthesize_speech, reply)
+    t.end("TTS")
+
+    t.summary()
+    await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio_path}"))
 
 
 async def _generate_and_reply(call_sid: str, user_text: str, t: Timer):
