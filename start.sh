@@ -1,70 +1,104 @@
-#!/bin/bash
+ 
 set -e
 
 echo "================================"
-echo "  Healthcare Voice Agent"
-echo "  RunPod GPU Server"
+echo "Healthcare Voice Agent - RunPod"
 echo "================================"
 
-# System deps
-apt-get install -y tmux zstd sox libsox-fmt-all -q > /dev/null 2>&1
+# ── Step 1: System dependencies ──
+echo "[1/7] Installing system dependencies..."
+apt-get update -qq > /dev/null 2>&1
+apt-get install -y -qq curl wget tmux zstd sox libsox-fmt-all > /dev/null 2>&1
+echo "      System deps ready"
 
-# Activate venv
-source /workspace/venv/bin/activate
+# ── Step 2: Install Ollama if missing ──
+echo "[2/7] Checking Ollama..."
+if ! command -v ollama &> /dev/null; then
+    echo "      Installing Ollama..."
+    curl -fsSL https://ollama.ai/install.sh | sh > /dev/null 2>&1
+fi
+echo "      Ollama found: $(ollama --version 2>/dev/null | head -1)"
 
-# Pull latest code from GitHub
+# ── Step 3: Activate venv ──
+echo "[3/7] Activating venv..."
+if [ ! -d "/workspace/venv" ]; then
+    echo "      Creating venv..."
+    python3 -m venv /workspace/venv
+    source /workspace/venv/bin/activate
+    pip install -q fastapi uvicorn faster-whisper piper-tts \
+        numpy soundfile requests python-dotenv twilio websockets
+else
+    source /workspace/venv/bin/activate
+fi
+echo "      Venv active"
+
+# ── Step 4: Pull latest code ──
+echo "[4/7] Pulling latest code from GitHub..."
 cd /workspace/healthcare-voice-agent
-git pull origin main 2>/dev/null || echo "Git pull skipped"
-
-# Audio dirs
+git pull origin main 2>&1 | tail -1
 mkdir -p audio/output audio/input
 
-# Start Ollama
+# ── Step 5: Start Ollama ──
+echo "[5/7] Starting Ollama..."
 tmux kill-session -t ollama 2>/dev/null || true
 tmux new-session -d -s ollama 'ollama serve'
-echo "⏳ Waiting for Ollama..."
 sleep 8
 
+# Wait for Ollama to be ready
+for i in 1 2 3 4 5; do
+    if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
+        echo "      Ollama ready"
+        break
+    fi
+    echo "      Waiting... ($i/5)"
+    sleep 3
+done
+
 # Pull model if not present
-if ! ollama list | grep -q "qwen3:8b"; then
-    echo "📥 Pulling qwen3:8b (~5.2GB)..."
+if ! ollama list 2>/dev/null | grep -q "qwen3:8b"; then
+    echo "      Pulling qwen3:8b (~5.2GB)..."
     ollama pull qwen3:8b
 fi
-echo "✅ Ollama + qwen3:8b ready"
+echo "      qwen3:8b ready"
 
-# Start ngrok (NGROK_TOKEN must be in RunPod env vars)
+# ── Step 6: Start ngrok ──
+echo "[6/7] Starting ngrok..."
 if [ -z "$NGROK_TOKEN" ]; then
-    echo "⚠️  NGROK_TOKEN not set — set it in RunPod env vars"
-    export BASE_URL="http://localhost:8000"
+    echo "      WARNING: NGROK_TOKEN not set in RunPod env vars"
+    echo "      Add NGROK_TOKEN in RunPod dashboard -> Environment Variables"
+    BASE_URL="http://localhost:8000"
 else
-    ngrok config add-authtoken ${NGROK_TOKEN} > /dev/null 2>&1
+    ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1
     tmux kill-session -t ngrok 2>/dev/null || true
     tmux new-session -d -s ngrok "ngrok http 8000"
     sleep 6
 
-    URL=$(curl -s http://127.0.0.1:4040/api/tunnels | \
-        python3 -c "import sys,json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "")
+    NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null | \
+        python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null || echo "")
 
-    if [ -n "$URL" ]; then
-        export BASE_URL=$URL
-        # Update .env with new URL
+    if [ -n "$NGROK_URL" ]; then
+        BASE_URL=$NGROK_URL
+        # Update .env
         if [ -f .env ]; then
-            sed -i "s|BASE_URL=.*|BASE_URL=$URL|" .env
+            sed -i "s|BASE_URL=.*|BASE_URL=$NGROK_URL|" .env
         else
-            echo "BASE_URL=$URL" > .env
+            echo "BASE_URL=$NGROK_URL" > .env
         fi
         echo "================================"
-        echo "  ngrok URL : $URL"
-        echo "  Twilio    : $URL/voice"
+        echo "ngrok URL : $NGROK_URL"
+        echo "Twilio    : $NGROK_URL/voice"
         echo "================================"
-        echo "  ⚠️  Update Twilio webhook to: $URL/voice"
+        echo "ACTION: Update Twilio webhook to above URL"
         echo "================================"
     else
-        echo "⚠️  ngrok URL not found"
-        export BASE_URL="http://localhost:8000"
+        echo "      WARNING: ngrok URL not found"
+        BASE_URL="http://localhost:8000"
     fi
 fi
 
-# Start FastAPI server
-echo "🚀 Starting server on port 8000..."
+export BASE_URL
+
+# ── Step 7: Start server ──
+echo "[7/7] Starting FastAPI server on port 8000..."
+cd /workspace/healthcare-voice-agent
 uvicorn src.main:app --host 0.0.0.0 --port 8000
