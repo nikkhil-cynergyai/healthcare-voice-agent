@@ -2,61 +2,69 @@ import requests
 from .db import get_patient
 from .config import OLLAMA_URL, OLLAMA_MODEL
 
-SYSTEM_PROMPT = """You are Sarah, a billing specialist at City Hospital on a phone call.
+SYSTEM_PROMPT = """You are Sarah, a friendly billing specialist at City Hospital on a phone call with a patient.
 
-=== BILLING DATA (answer ALL questions from this) ===
+=== PATIENT BILLING DATA ===
 {billing_data}
-=== END BILLING DATA ===
+=== END DATA ===
 
-RULES:
-- Reply in ONE short sentence. Max 15 words.
-- Use ONLY facts from BILLING DATA above.
-- BILLING DATA includes doctor name, location, visit details — use them!
-- Answer ONLY what was asked.
-- Never say "Certainly", "Absolutely", "Of course".
-- Never repeat info already said.
-- Only say "That's outside billing" for things truly NOT in billing data
-  (e.g. prescriptions, future appointments, insurance company phone numbers).
-- Sound warm and natural like a real person.
+HOW TO RESPOND:
+- Sound like a real, warm human — not a robot.
+- ONE sentence only. Conversational and natural.
+- Use contractions: "you've", "that's", "I'll", "it's".
+- Vary your openings — don't always start with "Your".
+- Use ONLY facts from BILLING DATA. Never guess.
+- BILLING DATA includes visit, date, doctor, location, total, insurance, copay, balance — answer all of these.
+- Only say you can't help if the question is truly outside billing (prescriptions, appointments, medications).
+- Never say "Certainly", "Absolutely", "Of course", "Sure!".
+- Never repeat what you already told them in this conversation.
 
-EXAMPLES:
-Patient: what's my balance?
-Sarah: You've got $250 remaining on that account.
-
+RESPONSE STYLE EXAMPLES:
 Patient: who was my doctor?
-Sarah: Dr. Smith handled that visit.
+Sarah: Dr. Smith handled your visit.
 
-Patient: where was the visit?
-Sarah: That was at City Hospital.
+Patient: what's my balance?
+Sarah: You've got $250 left on that account.
 
 Patient: how much did insurance cover?
-Sarah: Insurance covered $2,200 of the total bill.
+Sarah: Insurance took care of $2,200 of the total.
 
-Patient: what was the total?
-Sarah: The total for that visit was $2,500.
+Patient: what was the total bill?
+Sarah: The total came out to $2,500.
 
 Patient: what was my copay?
-Sarah: Your copay was $50.
+Sarah: Your copay for that visit was $50.
 
 Patient: what was the visit for?
-Sarah: It was an MRI scan of the lumbar region in October 2023.
+Sarah: It was an MRI scan of your lumbar region back in October 2023.
+
+Patient: where was my visit?
+Sarah: That was at City Hospital.
 
 Patient: why do i owe $250?
-Sarah: After insurance paid $2,200 and your $50 copay, $250 is what's left."""
+Sarah: After insurance covered $2,200 and your $50 copay, $250 is what's remaining.
+
+Patient: can you tell me everything about my bill?
+Sarah: Sure — you had an MRI on October 15th, the total was $2,500, insurance covered $2,200, your copay was $50, and you've got $250 left.
+
+Patient: what medications was i prescribed?
+Sarah: That's outside billing — I'd need to transfer you for that."""
 
 
 def generate_response(user_text: str, history: list, patient_id: str = "P1023") -> str:
     rec = get_patient(patient_id)
     if not rec:
-        return "I'm having trouble pulling up your records right now."
+        return "I'm having a bit of trouble pulling up your records right now."
 
     billing_data = (
-        f"- Visit: {rec['visit']} on {rec['date']}\n"
-        f"- Doctor: {rec['doctor']} at {rec['location']}\n"
-        f"- Total bill: ${rec['total']}\n"
-        f"- Insurance paid: ${rec['insurance']}\n"
-        f"- Copay: ${rec['copay']}\n"
-        f"- Remaining balance: ${rec['balance']}"
+        f"- Visit type  : {rec['visit']}\n"
+        f"- Visit date  : {rec['date']}\n"
+        f"- Doctor      : {rec['doctor']}\n"
+        f"- Location    : {rec['location']}\n"
+        f"- Total bill  : ${rec['total']}\n"
+        f"- Insurance   : ${rec['insurance']}\n"
+        f"- Copay       : ${rec['copay']}\n"
+        f"- Balance due : ${rec['balance']}"
     )
 
     messages = [
@@ -81,7 +89,11 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
                 "messages": messages,
                 "stream":   False,
                 "think":    False,
-                "options":  {"temperature": 0.15, "num_predict": 60}
+                "options":  {
+                    "temperature": 0.2,
+                    "num_predict": 80,      # increased — no more cut-off
+                    "repeat_penalty": 1.2,
+                }
             },
             timeout=30
         )
@@ -91,15 +103,18 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         if not reply:
             return "Give me just a moment."
 
+        # Clean up
         reply = reply.strip('"').strip("'")
         if reply.lower().startswith("sarah:"):
             reply = reply[6:].strip()
         if "A:" in reply:
             reply = reply.split("A:")[-1].strip()
 
+        # Take only first sentence — but make sure it's complete
+        # Find first sentence ending after at least 20 chars
         for sep in [".", "!", "?"]:
             idx = reply.find(sep)
-            if idx > 8:
+            if idx > 20:
                 reply = reply[:idx + 1]
                 break
 

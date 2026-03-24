@@ -9,6 +9,24 @@ echo "================================"
 echo "[1/7] Installing system dependencies..."
 apt-get update -qq > /dev/null 2>&1
 apt-get install -y -qq curl wget tmux zstd sox libsox-fmt-all > /dev/null 2>&1
+
+# Install ngrok if missing
+if ! command -v ngrok &> /dev/null; then
+    echo "      Installing ngrok..."
+    curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz | tar xz -C /tmp
+    mv /tmp/ngrok /usr/local/bin/ngrok
+fi
+
+# Download Piper model if missing
+mkdir -p /workspace/piper_models
+if [ ! -f "/workspace/piper_models/en_US-lessac-high.onnx" ]; then
+    echo "      Downloading Piper voice model..."
+    curl -sL -o /workspace/piper_models/en_US-lessac-high.onnx \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx"
+    curl -sL -o /workspace/piper_models/en_US-lessac-high.onnx.json \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json"
+fi
+
 echo "      System deps ready"
 
 # ── Step 2: Install Ollama if missing ──
@@ -19,25 +37,20 @@ if ! command -v ollama &> /dev/null; then
 fi
 echo "      Ollama ready"
 
-# ── Step 3: Activate venv + GPU packages ──
+# ── Step 3: Venv + packages ──
 echo "[3/7] Activating venv..."
 if [ ! -d "/workspace/venv" ]; then
     echo "      Creating venv..."
     python3 -m venv /workspace/venv
     source /workspace/venv/bin/activate
-    echo "      Installing Python packages..."
     pip install -q fastapi uvicorn faster-whisper piper-tts \
         numpy soundfile requests python-dotenv twilio websockets \
-        python-multipart
-    echo "      Installing GPU packages..."
-    pip uninstall -y onnxruntime 2>/dev/null || true
-    pip install -q onnxruntime-gpu
+        python-multipart onnxruntime-gpu
 else
     source /workspace/venv/bin/activate
-    # Make sure GPU packages installed
-    pip install -q onnxruntime-gpu python-multipart > /dev/null 2>&1 || true
+    pip install -q python-multipart onnxruntime-gpu > /dev/null 2>&1 || true
 fi
-echo "      Venv active (GPU packages ready)"
+echo "      Venv ready"
 
 # ── Step 4: Pull latest code ──
 echo "[4/7] Pulling latest code..."
@@ -45,13 +58,12 @@ cd /workspace/healthcare-voice-agent
 git pull origin main 2>&1 | tail -1
 mkdir -p audio/output audio/input
 
-# ── Step 5: Start Ollama on GPU ──
+# ── Step 5: Start Ollama ──
 echo "[5/7] Starting Ollama (GPU)..."
 tmux kill-session -t ollama 2>/dev/null || true
 tmux new-session -d -s ollama 'ollama serve'
 sleep 8
 
-# Wait for Ollama
 for i in 1 2 3 4 5; do
     if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
         echo "      Ollama ready"
@@ -60,17 +72,16 @@ for i in 1 2 3 4 5; do
     sleep 3
 done
 
-# Pull model if not present
 if ! ollama list 2>/dev/null | grep -q "qwen3:8b"; then
-    echo "      Pulling qwen3:8b (~5.2GB)..."
+    echo "      Pulling qwen3:8b..."
     ollama pull qwen3:8b
 fi
-echo "      qwen3:8b ready (37/37 layers on GPU)"
+echo "      qwen3:8b ready"
 
 # ── Step 6: Start ngrok ──
 echo "[6/7] Starting ngrok..."
 if [ -z "$NGROK_TOKEN" ]; then
-    echo "      WARNING: NGROK_TOKEN not set in RunPod env vars"
+    echo "      WARNING: NGROK_TOKEN not set"
     BASE_URL="http://localhost:8000"
 else
     ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1 || true
@@ -111,9 +122,9 @@ fi
 export BASE_URL
 
 # ── Step 7: Start server ──
-echo "[7/7] Starting FastAPI server (GPU mode)..."
-echo "      Whisper : CUDA float16"
-echo "      Ollama  : 37/37 layers GPU"
-echo "      Piper   : onnxruntime-gpu"
+echo "[7/7] Starting server..."
+echo "      STT : Whisper base (CUDA float16)"
+echo "      LLM : qwen3:8b (37/37 GPU layers)"
+echo "      TTS : Piper lessac-high (GPU/CPU)"
 cd /workspace/healthcare-voice-agent
 uvicorn src.main:app --host 0.0.0.0 --port 8000

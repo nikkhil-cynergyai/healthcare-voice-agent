@@ -14,7 +14,6 @@ if not os.path.exists(_MODEL_PATH):
         f"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx"
     )
 
-# Try GPU first, fallback to CPU
 print(f"[Piper TTS] Loading {PIPER_VOICE}...")
 try:
     _voice = PiperVoice.load(_MODEL_PATH, use_cuda=True)
@@ -23,11 +22,10 @@ except Exception:
     _voice = PiperVoice.load(_MODEL_PATH, use_cuda=False)
     print("[Piper TTS] Model ready ✅ (CPU)")
 
-# Pre-warm — first synthesis is always slow, do it at startup
+
 def _prewarm():
     try:
-        tmp = "/tmp/piper_prewarm.wav"
-        with wave.open(tmp, "wb") as f:
+        with wave.open("/tmp/piper_prewarm.wav", "wb") as f:
             _voice.synthesize_wav("hello", f)
         print("[Piper TTS] Pre-warmed ✅")
     except Exception as e:
@@ -37,7 +35,7 @@ threading.Thread(target=_prewarm, daemon=True).start()
 
 
 def synthesize_speech(text: str) -> str:
-    """Convert text to WAV using Piper TTS. Returns relative file path."""
+    """Convert text to WAV using Piper TTS. Returns file path."""
     if not text or not text.strip():
         return ""
 

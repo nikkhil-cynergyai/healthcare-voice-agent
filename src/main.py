@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from .config import BASE_URL, OLLAMA_URL, OLLAMA_MODEL
+from .config import BASE_URL, OLLAMA_URL, OLLAMA_MODEL, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
 from .tts import synthesize_speech
 from .stt import mulaw_to_pcm16, transcribe_chunks
 from .llm import generate_response
@@ -22,17 +22,22 @@ app.mount("/audio", StaticFiles(directory="audio"), name="audio")
 # ── Ollama warmup ──
 @app.on_event("startup")
 async def warmup():
-    print("🔥 Warming up Ollama...")
+    print("Warming up Ollama...")
     try:
         requests.post(
             OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "messages": [{"role": "user", "content": "hi"}],
-                  "stream": False, "think": False, "options": {"num_predict": 1}},
+            json={
+                "model":    OLLAMA_MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream":   False,
+                "think":    False,
+                "options":  {"num_predict": 1}
+            },
             timeout=120
         )
-        print("✅ Ollama ready")
+        print("Ollama ready")
     except Exception as e:
-        print(f"⚠️  Ollama warmup failed: {e}")
+        print(f"Ollama warmup failed: {e}")
     _prebuild_fillers()
 
 
@@ -44,7 +49,7 @@ FILLERS = [
     "I'm checking that for you.",
 ]
 GREETINGS  = {"hi", "hello", "hey", "good morning", "good afternoon"}
-EXIT_WORDS = {"bye", "goodbye", "thanks", "thank you", "that's all"}
+EXIT_WORDS = {"bye", "goodbye", "thanks", "thank you", "that's all", "thank you bye"}
 
 _filler_urls: list[str] = []
 
@@ -54,7 +59,7 @@ def _prebuild_fillers():
         path = synthesize_speech(text)
         if path:
             _filler_urls.append(f"{BASE_URL}/{path}")
-    print(f"[Fillers] {len(_filler_urls)} ready ✅")
+    print(f"[Fillers] {len(_filler_urls)} ready")
 
 
 # ── Sessions ──
@@ -62,7 +67,7 @@ sessions: dict[str, dict] = {}
 
 def get_session(call_sid: str) -> dict:
     if call_sid not in sessions:
-        sessions[call_sid] = {"history": [], "pending": "", "stream_sid": ""}
+        sessions[call_sid] = {"history": [], "stream_sid": ""}
     return sessions[call_sid]
 
 def clear_session(call_sid: str):
@@ -104,20 +109,14 @@ class Timer:
 
 
 # ── TwiML helpers ──
+def _ws_url():
+    return BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
+
 def twiml_play_and_stream(audio_url: str) -> str:
-    ws_url = BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Play>{audio_url}</Play>
-    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
-</Response>"""
-
-def twiml_filler(filler_url: str) -> str:
-    ws_url = BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Play>{filler_url}</Play>
-    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
+    <Connect><Stream url="{_ws_url()}/media-stream"/></Connect>
 </Response>"""
 
 def twiml_hangup(audio_url: str) -> str:
@@ -134,22 +133,21 @@ async def voice(request: Request):
     form     = await request.form()
     call_sid = form.get("CallSid", "unknown")
     get_session(call_sid)
-
     print(f"\n[/voice] New call: {call_sid}")
 
-    greeting_path = synthesize_speech(
+    greeting = synthesize_speech(
         "Hi, this is Sarah from City Hospital billing. How can I help you today?"
     )
     return Response(
-        twiml_play_and_stream(f"{BASE_URL}/{greeting_path}"),
+        twiml_play_and_stream(f"{BASE_URL}/{greeting}"),
         media_type="text/xml"
     )
 
 
-# ── /media-stream WebSocket ──
-SILENCE_THRESHOLD_MS = 800
-CHUNK_DURATION_MS    = 20
-CHUNKS_FOR_SILENCE   = SILENCE_THRESHOLD_MS // CHUNK_DURATION_MS
+# ── WebSocket Media Stream ──
+SILENCE_MS       = 800
+CHUNK_MS         = 20
+CHUNKS_SILENCE   = SILENCE_MS // CHUNK_MS
 
 
 @app.websocket("/media-stream")
@@ -186,7 +184,7 @@ async def media_stream(websocket: WebSocket):
                     silent_chunks += 1
                     audio_chunks.append(pcm_chunk)
 
-                    if silent_chunks >= CHUNKS_FOR_SILENCE:
+                    if silent_chunks >= CHUNKS_SILENCE:
                         print(f"[WS] Processing {len(audio_chunks)} chunks")
                         t = Timer()
 
@@ -208,7 +206,7 @@ async def media_stream(websocket: WebSocket):
                         # Exit
                         if any(w in user_text for w in EXIT_WORDS):
                             t.start("TTS")
-                            audio = synthesize_speech("Take care, don't hesitate to call again. Goodbye.")
+                            audio = synthesize_speech("Take care, and don't hesitate to call us again. Goodbye!")
                             t.end("TTS")
                             t.summary()
                             clear_session(call_sid)
@@ -218,7 +216,7 @@ async def media_stream(websocket: WebSocket):
                         # Greeting
                         if user_text.strip().rstrip(".,!?") in GREETINGS:
                             t.start("TTS")
-                            audio = synthesize_speech("Hey! How can I help you today?")
+                            audio = synthesize_speech("Hey there! How can I help you with your billing today?")
                             t.end("TTS")
                             t.summary()
                             await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio}"))
@@ -226,9 +224,8 @@ async def media_stream(websocket: WebSocket):
 
                         # Filler immediately
                         if _filler_urls:
-                            await _update_call(call_sid, twiml_filler(random.choice(_filler_urls)))
+                            await _update_call(call_sid, twiml_play_and_stream(random.choice(_filler_urls)))
 
-                        # LLM + TTS in background
                         asyncio.create_task(_generate_and_reply(call_sid, user_text, t))
 
             elif event == "stop":
@@ -261,7 +258,6 @@ async def _generate_and_reply(call_sid: str, user_text: str, t: Timer):
 
 
 async def _update_call(call_sid: str, twiml: str):
-    from .config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
     try:
         await asyncio.to_thread(
             requests.post,
