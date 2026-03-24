@@ -1,6 +1,8 @@
 import os
 import uuid
 import wave
+import numpy as np
+import soundfile as sf
 from piper import PiperVoice
 from .config import AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE
 
@@ -11,7 +13,7 @@ print(f"[Piper TTS] Loading {PIPER_VOICE}...")
 if not os.path.exists(_MODEL_PATH):
     raise FileNotFoundError(
         f"Piper model not found: {_MODEL_PATH}\n"
-        f"Download: curl -L -o {_MODEL_PATH} "
+        f"Run: curl -L -o {_MODEL_PATH} "
         f"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx"
     )
 
@@ -20,7 +22,7 @@ print("[Piper TTS] Model ready ✅")
 
 
 def synthesize_speech(text: str) -> str:
-    """Convert text to WAV using Piper TTS. Returns file path."""
+    """Convert text to WAV using Piper TTS. Returns relative file path."""
     if not text or not text.strip():
         return ""
 
@@ -31,7 +33,6 @@ def synthesize_speech(text: str) -> str:
         with wave.open(file_path, "wb") as wav_file:
             _voice.synthesize_wav(text, wav_file)
         return file_path
-
     except Exception as e:
         print(f"[Piper TTS Error]: {e}")
         return ""

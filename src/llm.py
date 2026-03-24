@@ -72,11 +72,11 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         r = requests.post(
             OLLAMA_URL,
             json={
-                "model":   OLLAMA_MODEL,
+                "model":    OLLAMA_MODEL,
                 "messages": messages,
-                "stream":  False,
-                "think":   False,
-                "options": {"temperature": 0.15, "num_predict": 60}
+                "stream":   False,
+                "think":    False,
+                "options":  {"temperature": 0.15, "num_predict": 60}
             },
             timeout=30
         )
@@ -86,14 +86,12 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         if not reply:
             return "Give me just a moment."
 
-        # Clean up
         reply = reply.strip('"').strip("'")
         if reply.lower().startswith("sarah:"):
             reply = reply[6:].strip()
         if "A:" in reply:
             reply = reply.split("A:")[-1].strip()
 
-        # First sentence only
         for sep in [".", "!", "?"]:
             idx = reply.find(sep)
             if idx > 8:

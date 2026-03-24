@@ -2,16 +2,16 @@ import numpy as np
 from faster_whisper import WhisperModel
 from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE
 
-print(f"[Whisper STT] Loading {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE})...")
+print(f"[Whisper STT] Loading model: {WHISPER_MODEL} on {WHISPER_DEVICE}...")
 _model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
 print("[Whisper STT] Model ready ✅")
 
 
 def mulaw_to_pcm16(mulaw_bytes: bytes) -> np.ndarray:
-    """Twilio mulaw 8kHz → float32 16kHz (Whisper format)"""
+    """mulaw 8kHz (Twilio) → PCM float32 16kHz (Whisper)"""
     import audioop
-    pcm_bytes     = audioop.ulaw2lin(mulaw_bytes, 2)
-    pcm_16k, _    = audioop.ratecv(pcm_bytes, 2, 1, 8000, 16000, None)
+    pcm_bytes      = audioop.ulaw2lin(mulaw_bytes, 2)
+    pcm_16k, _     = audioop.ratecv(pcm_bytes, 2, 1, 8000, 16000, None)
     return np.frombuffer(pcm_16k, dtype=np.int16).astype(np.float32) / 32768.0
 
 
@@ -22,7 +22,6 @@ def transcribe_chunks(audio_chunks: list) -> str:
 
     audio = np.concatenate(audio_chunks)
 
-    # Skip if too short (< 0.3s)
     if len(audio) < 16000 * 0.3:
         return ""
 
@@ -36,7 +35,6 @@ def transcribe_chunks(audio_chunks: list) -> str:
             vad_parameters=dict(min_silence_duration_ms=200)
         )
         return " ".join(seg.text for seg in segments).strip().lower()
-
     except Exception as e:
         print(f"[Whisper STT Error]: {e}")
         return ""

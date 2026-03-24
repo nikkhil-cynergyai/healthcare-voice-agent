@@ -6,28 +6,40 @@ echo "  Healthcare Voice Agent"
 echo "  RunPod GPU Server"
 echo "================================"
 
-# Pull latest code
+# System deps
+apt-get install -y tmux zstd sox libsox-fmt-all -q > /dev/null 2>&1
+
+# Activate venv
+source /workspace/venv/bin/activate
+
+# Pull latest code from GitHub
 cd /workspace/healthcare-voice-agent
 git pull origin main 2>/dev/null || echo "Git pull skipped"
 
-# Start Ollama in background
+# Audio dirs
+mkdir -p audio/output audio/input
+
+# Start Ollama
+tmux kill-session -t ollama 2>/dev/null || true
 tmux new-session -d -s ollama 'ollama serve'
-echo " Waiting for Ollama to start..."
+echo "⏳ Waiting for Ollama..."
 sleep 8
 
-# Pull qwen3:8b if not present
+# Pull model if not present
 if ! ollama list | grep -q "qwen3:8b"; then
-    echo " Pulling qwen3:8b model (~5.2GB)..."
+    echo "📥 Pulling qwen3:8b (~5.2GB)..."
     ollama pull qwen3:8b
 fi
 echo "✅ Ollama + qwen3:8b ready"
 
-# Start ngrok (NGROK_TOKEN must be set in RunPod env vars)
+# Start ngrok (NGROK_TOKEN must be in RunPod env vars)
 if [ -z "$NGROK_TOKEN" ]; then
-    echo "⚠️  NGROK_TOKEN not set — skipping ngrok"
+    echo "⚠️  NGROK_TOKEN not set — set it in RunPod env vars"
     export BASE_URL="http://localhost:8000"
 else
-    tmux new-session -d -s ngrok "ngrok http 8000 --authtoken ${NGROK_TOKEN}"
+    ngrok config add-authtoken ${NGROK_TOKEN} > /dev/null 2>&1
+    tmux kill-session -t ngrok 2>/dev/null || true
+    tmux new-session -d -s ngrok "ngrok http 8000"
     sleep 6
 
     URL=$(curl -s http://127.0.0.1:4040/api/tunnels | \
@@ -35,22 +47,24 @@ else
 
     if [ -n "$URL" ]; then
         export BASE_URL=$URL
+        # Update .env with new URL
+        if [ -f .env ]; then
+            sed -i "s|BASE_URL=.*|BASE_URL=$URL|" .env
+        else
+            echo "BASE_URL=$URL" > .env
+        fi
         echo "================================"
         echo "  ngrok URL : $URL"
         echo "  Twilio    : $URL/voice"
         echo "================================"
-        echo "  Update Twilio webhook to: $URL/voice"
+        echo "  ⚠️  Update Twilio webhook to: $URL/voice"
+        echo "================================"
     else
-        echo "  ngrok URL not found"
+        echo "⚠️  ngrok URL not found"
         export BASE_URL="http://localhost:8000"
     fi
 fi
 
-# Create audio dirs
-mkdir -p /workspace/healthcare-voice-agent/audio/output \
-         /workspace/healthcare-voice-agent/audio/input
-
 # Start FastAPI server
 echo "🚀 Starting server on port 8000..."
-cd /workspace/healthcare-voice-agent
 uvicorn src.main:app --host 0.0.0.0 --port 8000
