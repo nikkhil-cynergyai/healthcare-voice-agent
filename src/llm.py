@@ -1,6 +1,62 @@
 import requests
+import re
+import random
 from .db import get_patient
 from .config import OLLAMA_URL, OLLAMA_MODEL
+
+
+# ---------------- INTENT DETECTION ---------------- #
+
+def detect_intent(text: str) -> str:
+    t = text.lower()
+
+    billing_keywords = [
+        "bill", "balance", "pay", "payment", "charge",
+        "insurance", "copay", "total", "amount",
+        "doctor", "visit", "date", "hospital"
+    ]
+
+    fuzzy_map = {
+        "build": "bill",
+        "doc": "doctor",
+        "dock": "doctor",
+        "duck": "doctor",
+    }
+
+    for wrong, correct in fuzzy_map.items():
+        t = t.replace(wrong, correct)
+
+    if any(k in t for k in billing_keywords):
+        return "billing"
+
+    return "unknown"
+
+
+# ---------------- HUMANIZER ---------------- #
+
+def humanize(text: str) -> str:
+    replacements = {
+        "You have": "Looks like you’ve got",
+        "Your": "It looks like your",
+        "The total": "So the total",
+    }
+
+    for k, v in replacements.items():
+        if text.startswith(k):
+            text = text.replace(k, v, 1)
+
+    prefixes = [
+        "",
+        "Looks like ",
+        "From what I can see, ",
+        "So, "
+    ]
+
+    text = random.choice(prefixes) + text.lower()
+    return text.capitalize()
+
+
+# ---------------- PROMPT ---------------- #
 
 SYSTEM_PROMPT = """You are Sarah, a warm and friendly billing specialist at City Hospital on a phone call.
 
@@ -8,81 +64,40 @@ SYSTEM_PROMPT = """You are Sarah, a warm and friendly billing specialist at City
 {billing_data}
 === END DATA ===
 
-=== YOUR KNOWLEDGE ===
-You have access to: visit type, visit date, doctor name, hospital location, total bill, insurance paid, copay amount, and remaining balance.
-You do NOT have access to: prescriptions, medications, future appointments, referrals, lab results, other visits.
-
 === HOW TO TALK ===
-- Sound like a real, warm human — not a robot or a script.
-- ONE sentence only. Short, natural, conversational.
-- Use contractions: "you've", "that's", "I'd", "it's", "I'll".
-- Vary your sentence starters — don't always begin with "Your".
-- Never say "Certainly!", "Absolutely!", "Of course!", "Sure!", "Great question!".
-- Never repeat what was already said in this conversation.
-- Never make up or guess any numbers — only use exact values from billing data.
+- Sound like a real human, slightly conversational.
+- Keep responses short (1–2 sentences max).
+- Use contractions naturally.
+- Occasionally soften tone with:
+  "looks like", "it seems", "from what I can see"
+- Vary phrasing — don’t repeat patterns.
+- Don't sound scripted or robotic.
 
 === HOW TO ANSWER ===
-BILLING QUESTIONS (always answer these):
-- Balance / amount owed      → use "balance" field
-- Doctor / physician name    → use "doctor" field  
-- Hospital / clinic location → use "location" field
-- Total bill / charges       → use "total" field
-- Insurance coverage         → use "insurance" field
-- Copay                      → use "copay" field
-- Visit reason / type        → use "visit" field
-- Visit date                 → use "date" field
-- Why they owe money         → explain: total - insurance - copay = balance
+- Answer billing questions clearly using the data.
+- If unclear but seems billing-related, assume it is.
+- If truly unrelated:
+  "Hmm, that doesn’t sound like billing — want me to connect you to the right team?"
 
-EDGE CASES:
-- Patient asks multiple things at once → answer the most important one, offer to go through others
-- Patient is confused about the bill → explain it simply: "The total was X, insurance covered Y, your copay was Z, so you owe W."
-- Patient says they already paid → acknowledge and say you can check if they contact the billing office
-- Patient is upset / frustrated → stay calm, empathize, offer to help
-- Patient asks to speak to someone → "Of course, let me transfer you to our billing team."
-- Truly outside billing (prescriptions, appointments, lab results) → "That's outside billing — I'd need to transfer you for that."
+=== STYLE EXAMPLES ===
+"Looks like you've got $250 left on that account."
+"So the total came out to $2,500, and insurance covered most of it."
+"From what I can see, Dr. Smith was your doctor for that visit."
+"""
 
-=== RESPONSE STYLE EXAMPLES ===
-Patient: who was my doctor?
-Sarah: Dr. Smith was your doctor for that visit.
 
-Patient: what's my balance?
-Sarah: You've got $250 remaining on that account.
-
-Patient: how much did insurance cover?
-Sarah: Insurance took care of $2,200 of your total bill.
-
-Patient: what was the total?
-Sarah: The total for that visit came out to $2,500.
-
-Patient: what was my copay?
-Sarah: Your copay was $50 for that visit.
-
-Patient: what was the visit for?
-Sarah: It was an MRI scan of your lumbar region back in October 2023.
-
-Patient: where was my visit?
-Sarah: That was at City Hospital.
-
-Patient: why do i owe $250?
-Sarah: After insurance covered $2,200 and your $50 copay, $250 is what's left on the account.
-
-Patient: can you explain my whole bill?
-Sarah: Sure — the total was $2,500, insurance covered $2,200, your copay was $50, so you've got $250 remaining.
-
-Patient: i already paid this
-Sarah: I understand — if you've made a payment, I'd recommend calling our billing office so they can update your records.
-
-Patient: i want to speak to someone
-Sarah: Of course, let me transfer you to our billing team right away.
-
-Patient: what medications was i on?
-Sarah: That's outside billing — I'd need to transfer you to the medical team for that."""
-
+# ---------------- MAIN FUNCTION ---------------- #
 
 def generate_response(user_text: str, history: list, patient_id: str = "P1023") -> str:
     rec = get_patient(patient_id)
     if not rec:
         return "I'm having a bit of trouble pulling up your records right now."
+
+    intent = detect_intent(user_text)
+
+    # fallback for short vague voice queries
+    if intent == "unknown" and len(user_text.split()) <= 6:
+        intent = "billing"
 
     billing_data = (
         f"- Visit type  : {rec['visit']}\n"
@@ -101,55 +116,62 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
 
     for line in history[-8:]:
         if line.startswith("Patient:"):
-            messages.append({"role": "user",      "content": line.replace("Patient:", "").strip()})
+            messages.append({
+                "role": "user",
+                "content": line.replace("Patient:", "").strip()
+            })
         elif line.startswith("Sarah:"):
-            messages.append({"role": "assistant", "content": line.replace("Sarah:", "").strip()})
+            messages.append({
+                "role": "assistant",
+                "content": line.replace("Sarah:", "").strip()
+            })
 
     messages.append({"role": "user", "content": user_text})
 
-    print(f"[LLM] history={len(history)} turns")
+    print(f"[LLM] history={len(history)} | intent={intent}")
+
+    # hard block
+    if intent != "billing":
+        return "Hmm, that doesn’t sound like billing — want me to connect you to the right team?"
 
     try:
         r = requests.post(
             OLLAMA_URL,
             json={
-                "model":    OLLAMA_MODEL,
+                "model": OLLAMA_MODEL,
                 "messages": messages,
-                "stream":   False,
-                "think":    False,
-                "options":  {
-                    "temperature":    0.2,
-                    "num_predict":    80,
-                    "repeat_penalty": 1.2,
+                "stream": False,
+                "options": {
+                    "temperature": 0.4,  # 🔥 more human variation
+                    "num_predict": 80,
+                    "repeat_penalty": 1.1,
                 }
             },
             timeout=30
         )
         r.raise_for_status()
+
         reply = r.json().get("message", {}).get("content", "").strip()
 
-    
+        if not reply:
+            return "Just a second, pulling that up."
 
-        # Clean up
+        # cleanup
         reply = reply.strip('"').strip("'")
-        if reply.lower().startswith("sarah:"):
-            reply = reply[6:].strip()
-        if "A:" in reply:
-            reply = reply.split("A:")[-1].strip()
 
-        # First complete sentence only
-        # Fix: Don't cut on abbreviations like Dr. Mr. St. etc.
-        import re
-        # Remove cutoff on common abbreviations
-        cleaned = re.sub(r'\b(Dr|Mr|Mrs|Ms|St|vs|etc|Jr|Sr)\.\s', r'\1_DOTSPACE_', reply)
+        # sentence trimming
+        cleaned = re.sub(r'\b(Dr|Mr|Mrs|Ms|St)\.\s', r'\1_DOT_', reply)
         for sep in [".", "!", "?"]:
             idx = cleaned.find(sep)
             if idx > 20:
-                reply = reply[:idx + 1].replace("_DOTSPACE_", ". ")
+                reply = reply[:idx + 1].replace("_DOT_", ". ")
                 break
+
+        # humanize
+        reply = humanize(reply)
 
         return reply
 
     except Exception as e:
         print(f"[Ollama Error]: {e}")
-      
+        return "Just a second, I’m checking that for you."
