@@ -128,8 +128,7 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         r.raise_for_status()
         reply = r.json().get("message", {}).get("content", "").strip()
 
-        if not reply:
-            return "Give me just a moment."
+    
 
         # Clean up
         reply = reply.strip('"').strip("'")
@@ -153,4 +152,4 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
 
     except Exception as e:
         print(f"[Ollama Error]: {e}")
-        return "Give me just a moment."
+      
