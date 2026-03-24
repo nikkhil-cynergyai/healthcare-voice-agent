@@ -26,7 +26,7 @@ if [ ! -d "/workspace/venv" ]; then
     python3 -m venv /workspace/venv
     source /workspace/venv/bin/activate
     pip install -q fastapi uvicorn faster-whisper piper-tts \
-        numpy soundfile requests python-dotenv twilio websockets
+        numpy soundfile requests python-dotenv twilio websockets python-multipart
 else
     source /workspace/venv/bin/activate
 fi
