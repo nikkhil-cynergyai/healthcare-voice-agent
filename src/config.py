@@ -19,11 +19,10 @@ AUDIO_INPUT_DIR  = "audio/input"
 PIPER_MODELS_DIR = os.getenv("PIPER_MODELS_DIR", "/workspace/piper_models")
 PIPER_VOICE      = "en_US-lessac-high"
 
-# ── Whisper STT ──
-# RunPod GPU: set WHISPER_DEVICE=cuda in env vars
+# ── Whisper STT — GPU ──
 WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "base")
-WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cpu")
-WHISPER_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int8"
+WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cuda")   # GPU
+WHISPER_COMPUTE = "float16"                              # GPU uses float16
 
 # ── Ollama LLM ──
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")

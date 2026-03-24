@@ -1,14 +1,12 @@
 import os
 import uuid
 import wave
-import numpy as np
-import soundfile as sf
 from piper import PiperVoice
 from .config import AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE
 
 _MODEL_PATH = os.path.join(PIPER_MODELS_DIR, f"{PIPER_VOICE}.onnx")
 
-print(f"[Piper TTS] Loading {PIPER_VOICE}...")
+print(f"[Piper TTS] Loading {PIPER_VOICE} on GPU...")
 
 if not os.path.exists(_MODEL_PATH):
     raise FileNotFoundError(
@@ -17,12 +15,13 @@ if not os.path.exists(_MODEL_PATH):
         f"https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx"
     )
 
-_voice = PiperVoice.load(_MODEL_PATH)
-print("[Piper TTS] Model ready ✅")
+# use_cuda=True → onnxruntime-gpu uses NVIDIA GPU
+_voice = PiperVoice.load(_MODEL_PATH, use_cuda=True)
+print("[Piper TTS] Model ready ✅ (GPU)")
 
 
 def synthesize_speech(text: str) -> str:
-    """Convert text to WAV using Piper TTS. Returns relative file path."""
+    """Convert text to WAV using Piper TTS on GPU. Returns file path."""
     if not text or not text.strip():
         return ""
 
