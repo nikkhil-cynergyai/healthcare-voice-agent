@@ -1,5 +1,5 @@
- 
-set -e
+#!/bin/bash
+# Healthcare Voice Agent - RunPod Startup Script
 
 echo "================================"
 echo "Healthcare Voice Agent - RunPod"
@@ -64,21 +64,27 @@ echo "      qwen3:8b ready"
 # ── Step 6: Start ngrok ──
 echo "[6/7] Starting ngrok..."
 if [ -z "$NGROK_TOKEN" ]; then
-    echo "      WARNING: NGROK_TOKEN not set in RunPod env vars"
-    echo "      Add NGROK_TOKEN in RunPod dashboard -> Environment Variables"
+    echo "      WARNING: NGROK_TOKEN not set"
     BASE_URL="http://localhost:8000"
 else
-    ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1
+    ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1 || true
     tmux kill-session -t ngrok 2>/dev/null || true
-    tmux new-session -d -s ngrok "ngrok http 8000"
-    sleep 6
+    tmux new-session -d -s ngrok "ngrok http 8000" || true
+    sleep 8
 
-    NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null | \
-        python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null || echo "")
+    NGROK_URL=""
+    for i in 1 2 3; do
+        NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tunnels'][0]['public_url'])" 2>/dev/null || echo "")
+        if [ -n "$NGROK_URL" ]; then
+            break
+        fi
+        echo "      Waiting for ngrok... ($i/3)"
+        sleep 4
+    done
 
     if [ -n "$NGROK_URL" ]; then
         BASE_URL=$NGROK_URL
-        # Update .env
         if [ -f .env ]; then
             sed -i "s|BASE_URL=.*|BASE_URL=$NGROK_URL|" .env
         else
@@ -88,10 +94,8 @@ else
         echo "ngrok URL : $NGROK_URL"
         echo "Twilio    : $NGROK_URL/voice"
         echo "================================"
-        echo "ACTION: Update Twilio webhook to above URL"
-        echo "================================"
     else
-        echo "      WARNING: ngrok URL not found"
+        echo "      ngrok URL not found, using localhost"
         BASE_URL="http://localhost:8000"
     fi
 fi
