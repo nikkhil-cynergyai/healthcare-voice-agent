@@ -240,30 +240,22 @@ async def media_stream(websocket: WebSocket):
 async def _smart_reply(call_sid: str, user_text: str, t: Timer):
     """
     Smart filler logic:
-    - Start LLM immediately
-    - If LLM + TTS done within 3s → play reply directly (no filler)
-    - If LLM + TTS takes >3s → play filler first, then reply
+    - LLM < 3s  → play reply directly
+    - LLM > 3s  → play filler + reply in ONE TwiML (no overlap)
     """
     session = get_session(call_sid)
     session["history"].append(f"Patient: {user_text}")
 
-    # Start LLM in background
     t.start("LLM")
     llm_task = asyncio.create_task(
         asyncio.to_thread(generate_response, user_text, session["history"])
     )
 
-    # Wait up to 3s for LLM
-    filler_played = False
+    filler_needed = False
     try:
         reply = await asyncio.wait_for(asyncio.shield(llm_task), timeout=3.0)
     except asyncio.TimeoutError:
-        # LLM taking too long — play filler now
-        if _filler_urls:
-            filler_played = True
-            await _update_call(call_sid, twiml_play_and_stream(random.choice(_filler_urls)))
-            print(f"[Filler] Played — LLM slow (>3s)")
-        # Wait for LLM to finish
+        filler_needed = True
         reply = await llm_task
 
     t.end("LLM")
@@ -276,7 +268,28 @@ async def _smart_reply(call_sid: str, user_text: str, t: Timer):
     t.end("TTS")
 
     t.summary()
-    await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio_path}"))
+
+    reply_url = f"{BASE_URL}/{audio_path}"
+    ws_url    = BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
+
+    if filler_needed and _filler_urls:
+        # Filler + reply in ONE TwiML — no overlap
+        filler_url = random.choice(_filler_urls)
+        print(f"[Filler] Played — LLM was slow (>3s)")
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>{filler_url}</Play>
+    <Play>{reply_url}</Play>
+    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
+</Response>"""
+    else:
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>{reply_url}</Play>
+    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
+</Response>"""
+
+    await _update_call(call_sid, twiml)
 
 
 async def _generate_and_reply(call_sid: str, user_text: str, t: Timer):
@@ -309,7 +322,6 @@ async def _update_call(call_sid: str, twiml: str):
         )
     except Exception as e:
         print(f"[Twilio REST Error]: {e}")
-
 
 # ── Call status ──
 @app.post("/call-status")
