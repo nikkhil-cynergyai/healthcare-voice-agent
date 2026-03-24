@@ -41,7 +41,7 @@ async def warmup():
     _prebuild_fillers()
 
 
-# ── Filler phrases — pre-generated at startup ──
+# ── Filler phrases — pre-generated but only used if LLM is slow ──
 FILLERS = [
     "Give me a moment while I check that.",
     "Let me look into your records.",
@@ -159,7 +159,8 @@ CHUNK_MS       = 20
 CHUNKS_SILENCE = SILENCE_MS // CHUNK_MS
 
 # LLM response time threshold for filler
-FILLER_THRESHOLD = 0.8   # seconds — if LLM+TTS > this, filler was worth it
+# Set high (10s) = fillers effectively disabled on GPU
+FILLER_THRESHOLD = 10.0
 
 
 @app.websocket("/media-stream")

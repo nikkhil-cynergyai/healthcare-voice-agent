@@ -138,11 +138,15 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         if "A:" in reply:
             reply = reply.split("A:")[-1].strip()
 
-        # First complete sentence only (min 20 chars to avoid cutoff)
+        # First complete sentence only
+        # Fix: Don't cut on abbreviations like Dr. Mr. St. etc.
+        import re
+        # Remove cutoff on common abbreviations
+        cleaned = re.sub(r'\b(Dr|Mr|Mrs|Ms|St|vs|etc|Jr|Sr)\.\s', r'\1_DOTSPACE_', reply)
         for sep in [".", "!", "?"]:
-            idx = reply.find(sep)
+            idx = cleaned.find(sep)
             if idx > 20:
-                reply = reply[:idx + 1]
+                reply = reply[:idx + 1].replace("_DOTSPACE_", ". ")
                 break
 
         return reply
