@@ -1,9 +1,44 @@
 import requests
 from .db import get_patient
+from .config import OLLAMA_URL, OLLAMA_MODEL
 
-RUNPOD_URL = "https://vtagw7z69r7gvs-8000.proxy.runpod.net/chat"
-OLLAMA_URL = "http://localhost:11434/api/chat"
-MODEL      = "qwen3:8b"
+SYSTEM_PROMPT = """You are Sarah, a billing specialist at City Hospital on a phone call.
+
+=== BILLING DATA (your only source of truth) ===
+{billing_data}
+=== END BILLING DATA ===
+
+RULES:
+- Reply in ONE short sentence only. Max 15 words.
+- Use ONLY numbers from BILLING DATA above. Never guess or invent.
+- Answer ONLY what was asked. Nothing extra.
+- Never say "Certainly", "Absolutely", "Of course", "Sure!".
+- Never repeat info already said in conversation.
+- If asked something NOT in billing data: "That's outside billing, I'd need to transfer you."
+- Sound natural and warm — like a real person.
+
+EXAMPLES:
+Patient: what's my balance?
+Sarah: You've got $250 remaining on that account.
+
+Patient: who was my doctor?
+Sarah: Dr. Smith handled that visit.
+
+Patient: how much did insurance cover?
+Sarah: Insurance covered $2,200 of the total bill.
+
+Patient: what was the total?
+Sarah: The total for that visit was $2,500.
+
+Patient: what was my copay?
+Sarah: Your copay was $50.
+
+Patient: what was the visit for?
+Sarah: It was an MRI scan of the lumbar region in October 2023.
+
+Patient: why do i owe $250?
+Sarah: After insurance paid $2,200 and your $50 copay, $250 is what's left."""
+
 
 def generate_response(user_text: str, history: list, patient_id: str = "P1023") -> str:
     rec = get_patient(patient_id)
@@ -11,46 +46,62 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         return "I'm having trouble pulling up your records right now."
 
     billing_data = (
-        f"Visit: {rec['visit']} on {rec['date']}\n"
-        f"Doctor: {rec['doctor']} at {rec['location']}\n"
-        f"Total bill: ${rec['total']}\n"
-        f"Insurance paid: ${rec['insurance']}\n"
-        f"Copay: ${rec['copay']}\n"
-        f"Remaining balance: ${rec['balance']}"
+        f"- Visit: {rec['visit']} on {rec['date']}\n"
+        f"- Doctor: {rec['doctor']} at {rec['location']}\n"
+        f"- Total bill: ${rec['total']}\n"
+        f"- Insurance paid: ${rec['insurance']}\n"
+        f"- Copay: ${rec['copay']}\n"
+        f"- Remaining balance: ${rec['balance']}"
     )
 
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT.format(billing_data=billing_data)}
+    ]
+
+    for line in history[-8:]:
+        if line.startswith("Patient:"):
+            messages.append({"role": "user",      "content": line.replace("Patient:", "").strip()})
+        elif line.startswith("Sarah:"):
+            messages.append({"role": "assistant", "content": line.replace("Sarah:", "").strip()})
+
+    messages.append({"role": "user", "content": user_text})
+
+    print(f"[LLM] history={len(history)} turns")
+
     try:
-        response = requests.post(
-            RUNPOD_URL,
-            json={"user_text": user_text, "history": history, "billing_data": billing_data},
-            timeout=15
+        r = requests.post(
+            OLLAMA_URL,
+            json={
+                "model":   OLLAMA_MODEL,
+                "messages": messages,
+                "stream":  False,
+                "think":   False,
+                "options": {"temperature": 0.15, "num_predict": 60}
+            },
+            timeout=30
         )
-        response.raise_for_status()
-        reply = response.json().get("reply", "").strip()
-        if reply:
-            print("[LLM] RunPod GPU ✅")
-            return reply
-    except Exception as e:
-        print(f"[RunPod] Failed: {e} — falling back to local Ollama")
-
-    try:
-        messages = [{"role": "system", "content": f"You are Sarah, billing specialist. Reply in ONE sentence. Use ONLY: {billing_data}"}]
-        for line in history[-8:]:
-            if line.startswith("Patient:"):
-                messages.append({"role": "user", "content": line.replace("Patient:", "").strip()})
-            elif line.startswith("Sarah:"):
-                messages.append({"role": "assistant", "content": line.replace("Sarah:", "").strip()})
-        messages.append({"role": "user", "content": user_text})
-
-        r = requests.post(OLLAMA_URL, json={"model": MODEL, "messages": messages, "stream": False, "think": False, "options": {"temperature": 0.15, "num_predict": 60}}, timeout=30)
+        r.raise_for_status()
         reply = r.json().get("message", {}).get("content", "").strip()
-        print("[LLM] Local Ollama fallback ✅")
+
+        if not reply:
+            return "Give me just a moment."
+
+        # Clean up
+        reply = reply.strip('"').strip("'")
+        if reply.lower().startswith("sarah:"):
+            reply = reply[6:].strip()
+        if "A:" in reply:
+            reply = reply.split("A:")[-1].strip()
+
+        # First sentence only
         for sep in [".", "!", "?"]:
             idx = reply.find(sep)
             if idx > 8:
-                reply = reply[:idx+1]
+                reply = reply[:idx + 1]
                 break
+
         return reply
+
     except Exception as e:
         print(f"[Ollama Error]: {e}")
         return "Give me just a moment."
