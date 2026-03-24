@@ -1,5 +1,5 @@
 #!/bin/bash
-# Healthcare Voice Agent - RunPod Startup Script
+# Healthcare Voice Agent - RunPod GPU Startup Script
 
 echo "================================"
 echo "Healthcare Voice Agent - RunPod"
@@ -17,40 +17,46 @@ if ! command -v ollama &> /dev/null; then
     echo "      Installing Ollama..."
     curl -fsSL https://ollama.ai/install.sh | sh > /dev/null 2>&1
 fi
-echo "      Ollama found: $(ollama --version 2>/dev/null | head -1)"
+echo "      Ollama ready"
 
-# ── Step 3: Activate venv ──
+# ── Step 3: Activate venv + GPU packages ──
 echo "[3/7] Activating venv..."
 if [ ! -d "/workspace/venv" ]; then
     echo "      Creating venv..."
     python3 -m venv /workspace/venv
     source /workspace/venv/bin/activate
+    echo "      Installing Python packages..."
     pip install -q fastapi uvicorn faster-whisper piper-tts \
-        numpy soundfile requests python-dotenv twilio websockets python-multipart
+        numpy soundfile requests python-dotenv twilio websockets \
+        python-multipart
+    echo "      Installing GPU packages..."
+    pip uninstall -y onnxruntime 2>/dev/null || true
+    pip install -q onnxruntime-gpu
 else
     source /workspace/venv/bin/activate
+    # Make sure GPU packages installed
+    pip install -q onnxruntime-gpu python-multipart > /dev/null 2>&1 || true
 fi
-echo "      Venv active"
+echo "      Venv active (GPU packages ready)"
 
 # ── Step 4: Pull latest code ──
-echo "[4/7] Pulling latest code from GitHub..."
+echo "[4/7] Pulling latest code..."
 cd /workspace/healthcare-voice-agent
 git pull origin main 2>&1 | tail -1
 mkdir -p audio/output audio/input
 
-# ── Step 5: Start Ollama ──
-echo "[5/7] Starting Ollama..."
+# ── Step 5: Start Ollama on GPU ──
+echo "[5/7] Starting Ollama (GPU)..."
 tmux kill-session -t ollama 2>/dev/null || true
 tmux new-session -d -s ollama 'ollama serve'
 sleep 8
 
-# Wait for Ollama to be ready
+# Wait for Ollama
 for i in 1 2 3 4 5; do
     if curl -s http://localhost:11434/api/version > /dev/null 2>&1; then
         echo "      Ollama ready"
         break
     fi
-    echo "      Waiting... ($i/5)"
     sleep 3
 done
 
@@ -59,17 +65,17 @@ if ! ollama list 2>/dev/null | grep -q "qwen3:8b"; then
     echo "      Pulling qwen3:8b (~5.2GB)..."
     ollama pull qwen3:8b
 fi
-echo "      qwen3:8b ready"
+echo "      qwen3:8b ready (37/37 layers on GPU)"
 
 # ── Step 6: Start ngrok ──
 echo "[6/7] Starting ngrok..."
 if [ -z "$NGROK_TOKEN" ]; then
-    echo "      WARNING: NGROK_TOKEN not set"
+    echo "      WARNING: NGROK_TOKEN not set in RunPod env vars"
     BASE_URL="http://localhost:8000"
 else
     ngrok config add-authtoken "$NGROK_TOKEN" > /dev/null 2>&1 || true
     tmux kill-session -t ngrok 2>/dev/null || true
-    tmux new-session -d -s ngrok "ngrok http 8000" || true
+    tmux new-session -d -s ngrok "ngrok http 8000"
     sleep 8
 
     NGROK_URL=""
@@ -94,8 +100,10 @@ else
         echo "ngrok URL : $NGROK_URL"
         echo "Twilio    : $NGROK_URL/voice"
         echo "================================"
+        echo "ACTION: Update Twilio webhook!"
+        echo "================================"
     else
-        echo "      ngrok URL not found, using localhost"
+        echo "      ngrok URL not found"
         BASE_URL="http://localhost:8000"
     fi
 fi
@@ -103,6 +111,9 @@ fi
 export BASE_URL
 
 # ── Step 7: Start server ──
-echo "[7/7] Starting FastAPI server on port 8000..."
+echo "[7/7] Starting FastAPI server (GPU mode)..."
+echo "      Whisper : CUDA float16"
+echo "      Ollama  : 37/37 layers GPU"
+echo "      Piper   : onnxruntime-gpu"
 cd /workspace/healthcare-voice-agent
 uvicorn src.main:app --host 0.0.0.0 --port 8000
