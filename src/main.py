@@ -41,7 +41,7 @@ async def warmup():
     _prebuild_fillers()
 
 
-# ── Filler phrases ──
+# ── Filler phrases — pre-generated at startup ──
 FILLERS = [
     "Give me a moment while I check that.",
     "Let me look into your records.",
@@ -119,6 +119,15 @@ def twiml_play_and_stream(audio_url: str) -> str:
     <Connect><Stream url="{_ws_url()}/media-stream"/></Connect>
 </Response>"""
 
+def twiml_play_two_and_stream(first_url: str, second_url: str) -> str:
+    """Play filler then reply in ONE TwiML — no overlap."""
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Play>{first_url}</Play>
+    <Play>{second_url}</Play>
+    <Connect><Stream url="{_ws_url()}/media-stream"/></Connect>
+</Response>"""
+
 def twiml_hangup(audio_url: str) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -145,9 +154,12 @@ async def voice(request: Request):
 
 
 # ── WebSocket Media Stream ──
-SILENCE_MS       = 800
-CHUNK_MS         = 20
-CHUNKS_SILENCE   = SILENCE_MS // CHUNK_MS
+SILENCE_MS     = 800
+CHUNK_MS       = 20
+CHUNKS_SILENCE = SILENCE_MS // CHUNK_MS
+
+# LLM response time threshold for filler
+FILLER_THRESHOLD = 0.8   # seconds — if LLM+TTS > this, filler was worth it
 
 
 @app.websocket("/media-stream")
@@ -193,6 +205,7 @@ async def media_stream(websocket: WebSocket):
                         silent_chunks     = 0
                         is_speaking       = False
 
+                        # STT
                         t.start("STT")
                         user_text = transcribe_chunks(chunks_to_process)
                         t.end("STT")
@@ -222,7 +235,10 @@ async def media_stream(websocket: WebSocket):
                             await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio}"))
                             continue
 
-                        # Smart filler — play only if LLM takes >3s
+                        # ── OPTION 2: Smart filler ──
+                        # Run LLM + TTS in parallel with a timer
+                        # If fast enough → play reply directly (no filler)
+                        # If slow → play filler + reply in ONE TwiML (no overlap)
                         asyncio.create_task(
                             _smart_reply(call_sid, user_text, t)
                         )
@@ -239,63 +255,17 @@ async def media_stream(websocket: WebSocket):
 
 async def _smart_reply(call_sid: str, user_text: str, t: Timer):
     """
-    Smart filler logic:
-    - LLM < 3s  → play reply directly
-    - LLM > 3s  → play filler + reply in ONE TwiML (no overlap)
+    Option 2 — Smart filler:
+    - Start LLM + TTS immediately
+    - If total time < 0.8s → play reply directly (no filler needed)
+    - If total time > 0.8s → play filler + reply in ONE TwiML (sequential, no overlap)
     """
     session = get_session(call_sid)
     session["history"].append(f"Patient: {user_text}")
 
-    t.start("LLM")
-    llm_task = asyncio.create_task(
-        asyncio.to_thread(generate_response, user_text, session["history"])
-    )
+    start = time.time()
 
-    filler_needed = False
-    try:
-        reply = await asyncio.wait_for(asyncio.shield(llm_task), timeout=3.0)
-    except asyncio.TimeoutError:
-        filler_needed = True
-        reply = await llm_task
-
-    t.end("LLM")
-
-    session["history"].append(f"Sarah: {reply}")
-    print(f"[LLM] Reply: '{reply}'")
-
-    t.start("TTS")
-    audio_path = await asyncio.to_thread(synthesize_speech, reply)
-    t.end("TTS")
-
-    t.summary()
-
-    reply_url = f"{BASE_URL}/{audio_path}"
-    ws_url    = BASE_URL.replace("https://", "wss://").replace("http://", "ws://")
-
-    if filler_needed and _filler_urls:
-        # Filler + reply in ONE TwiML — no overlap
-        filler_url = random.choice(_filler_urls)
-        print(f"[Filler] Played — LLM was slow (>3s)")
-        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Play>{filler_url}</Play>
-    <Play>{reply_url}</Play>
-    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
-</Response>"""
-    else:
-        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Play>{reply_url}</Play>
-    <Connect><Stream url="{ws_url}/media-stream"/></Connect>
-</Response>"""
-
-    await _update_call(call_sid, twiml)
-
-
-async def _generate_and_reply(call_sid: str, user_text: str, t: Timer):
-    session = get_session(call_sid)
-    session["history"].append(f"Patient: {user_text}")
-
+    # Run LLM
     t.start("LLM")
     reply = await asyncio.to_thread(generate_response, user_text, session["history"])
     t.end("LLM")
@@ -303,12 +273,28 @@ async def _generate_and_reply(call_sid: str, user_text: str, t: Timer):
     session["history"].append(f"Sarah: {reply}")
     print(f"[LLM] Reply: '{reply}'")
 
+    # Run TTS
     t.start("TTS")
     audio_path = await asyncio.to_thread(synthesize_speech, reply)
     t.end("TTS")
 
+    elapsed = time.time() - start
     t.summary()
-    await _update_call(call_sid, twiml_play_and_stream(f"{BASE_URL}/{audio_path}"))
+
+    if not audio_path:
+        return
+
+    reply_url = f"{BASE_URL}/{audio_path}"
+
+    if elapsed > FILLER_THRESHOLD and _filler_urls:
+        # Slow response — play filler then reply in ONE call (no overlap)
+        filler_url = random.choice(_filler_urls)
+        print(f"[filler] slow response ({elapsed:.2f}s) → playing filler + reply")
+        await _update_call(call_sid, twiml_play_two_and_stream(filler_url, reply_url))
+    else:
+        # Fast response — play reply directly
+        print(f"[reply] fast response ({elapsed:.2f}s) → direct reply")
+        await _update_call(call_sid, twiml_play_and_stream(reply_url))
 
 
 async def _update_call(call_sid: str, twiml: str):
@@ -322,6 +308,7 @@ async def _update_call(call_sid: str, twiml: str):
         )
     except Exception as e:
         print(f"[Twilio REST Error]: {e}")
+
 
 # ── Call status ──
 @app.post("/call-status")
