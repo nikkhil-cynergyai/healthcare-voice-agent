@@ -4,27 +4,26 @@ import wave
 import threading
 from .config import AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE
 
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # 
-ELEVENLABS_MODEL = "eleven_turbo_v2"   # fastest model ~300ms
+MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
+MISTRAL_VOICE_ID = os.getenv("MISTRAL_VOICE_ID", "sarah")  # default voice
 
-# ── Try ElevenLabs first, fallback to Piper ──
-_use_elevenlabs = False
-_eleven_client  = None
+# ── Try Voxtral TTS first ──
+_use_mistral   = False
+_mistral_client = None
 
-if ELEVENLABS_API_KEY:
+if MISTRAL_API_KEY:
     try:
-        from elevenlabs.client import ElevenLabs
-        _eleven_client  = ElevenLabs(api_key=ELEVENLABS_API_KEY)
-        _use_elevenlabs = True
-        print("[TTS] ElevenLabs ready ✅")
+        from mistralai import Mistral
+        _mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+        _use_mistral    = True
+        print("[TTS] Voxtral TTS (Mistral) ready ✅")
     except Exception as e:
-        print(f"[TTS] ElevenLabs failed: {e} — falling back to Piper")
+        print(f"[TTS] Mistral failed: {e} — falling back to Piper")
 
 # ── Piper fallback ──
 _piper_voice = None
 
-if not _use_elevenlabs:
+if not _use_mistral:
     try:
         from piper import PiperVoice
         _MODEL_PATH = os.path.join(PIPER_MODELS_DIR, f"{PIPER_VOICE}.onnx")
@@ -52,32 +51,35 @@ if not _use_elevenlabs:
 
 
 def synthesize_speech(text: str) -> str:
-    """Convert text to WAV. Uses ElevenLabs if available, else Piper."""
+    """Convert text to WAV. Uses Voxtral TTS if available, else Piper."""
     if not text or not text.strip():
         return ""
 
     os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
     file_path = os.path.join(AUDIO_OUTPUT_DIR, f"tts_{uuid.uuid4().hex}.wav")
 
-    # ── ElevenLabs ──
-    if _use_elevenlabs and _eleven_client:
+    # ── Voxtral TTS ──
+    if _use_mistral and _mistral_client:
         try:
-            audio = _eleven_client.text_to_speech.convert(
-                voice_id=ELEVENLABS_VOICE_ID,
-                text=text,
-                model_id=ELEVENLABS_MODEL,
-                output_format="pcm_22050",   # raw PCM — fast
+            response = _mistral_client.audio.speech.create(
+                model="voxtral-tts",
+                voice=MISTRAL_VOICE_ID,
+                input=text,
+                response_format="pcm",   # raw PCM — fastest
             )
-            # Write PCM to WAV
-            pcm_data = b"".join(audio)
+
+            # Write PCM → WAV
+            pcm_data = response.read()
             with wave.open(file_path, "wb") as wf:
                 wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(22050)
+                wf.setsampwidth(2)       # 16-bit
+                wf.setframerate(22050)   # 22kHz
                 wf.writeframes(pcm_data)
+
             return file_path
+
         except Exception as e:
-            print(f"[ElevenLabs Error]: {e} — falling back to Piper")
+            print(f"[Voxtral TTS Error]: {e} — falling back to Piper")
 
     # ── Piper fallback ──
     if _piper_voice:

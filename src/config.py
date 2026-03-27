@@ -22,7 +22,7 @@ PIPER_VOICE      = "en_US-lessac-high"
 # ── Whisper STT — GPU ──
 WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cuda")
-WHISPER_COMPUTE = "float16"
+WHISPER_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int8"
 
 # ── Ollama LLM ──
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
