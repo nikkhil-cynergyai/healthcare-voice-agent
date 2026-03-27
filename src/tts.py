@@ -5,7 +5,7 @@ import threading
 from .config import AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Sarah voice
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # 
 ELEVENLABS_MODEL = "eleven_turbo_v2"   # fastest model ~300ms
 
 # ── Try ElevenLabs first, fallback to Piper ──
