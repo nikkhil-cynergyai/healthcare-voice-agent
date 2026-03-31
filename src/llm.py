@@ -106,10 +106,36 @@ Patient: why do i owe $250?
 Sarah: After insurance covered $2,200 and your $50 copay, $250 is what's left on the account."""
 
 
+def _fix_transcript(text: str) -> str:
+    """Fix common Whisper mishearing errors for billing context."""
+    fixes = {
+        "wireless":    "balance",
+        "violins":     "balance",
+        "violence":    "balance",
+        "badness":     "balance",
+        "insurers":    "insurance",
+        "inshore":     "insurance",
+        "ensure":      "insurance",
+        "copy":        "copay",
+        "co-pay":      "copay",
+        "dr ":         "doctor ",
+        "total violence": "total balance",
+        "short balance":  "total balance",
+    }
+    result = text.lower()
+    for wrong, right in fixes.items():
+        result = result.replace(wrong, right)
+    return result
+
+
 def generate_response(user_text: str, history: list, patient_id: str = "P1023") -> str:
     rec = get_patient(patient_id)
     if not rec:
         return "I'm having a bit of trouble pulling up your records right now."
+
+    # Fix Whisper mishearing
+    user_text = _fix_transcript(user_text)
+    print(f"[LLM] Cleaned transcript: '{user_text}'")
 
     # Build services breakdown string
     services_str = " | ".join(
