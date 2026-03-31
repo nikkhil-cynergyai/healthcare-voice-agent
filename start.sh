@@ -6,18 +6,18 @@ echo "Healthcare Voice Agent - RunPod"
 echo "================================"
 
 # ── Step 1: System dependencies ──
-echo "[1/7] Installing system dependencies..."
+echo "[1/7] Installing system deps..."
 apt-get update -qq > /dev/null 2>&1
 apt-get install -y -qq curl wget tmux zstd sox libsox-fmt-all > /dev/null 2>&1
 
-# Install ngrok if missing
+# ngrok install if missing
 if ! command -v ngrok &> /dev/null; then
     echo "      Installing ngrok..."
     curl -sL https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz | tar xz -C /tmp
-    mv /tmp/ngrok /usr/local/bin/ngrok
+    mv /tmp/ngrok /usr/local/bin/
 fi
 
-# Download Piper model if missing
+# Piper model if missing
 mkdir -p /workspace/piper_models
 if [ ! -f "/workspace/piper_models/en_US-lessac-high.onnx" ]; then
     echo "      Downloading Piper voice model..."
@@ -26,10 +26,9 @@ if [ ! -f "/workspace/piper_models/en_US-lessac-high.onnx" ]; then
     curl -sL -o /workspace/piper_models/en_US-lessac-high.onnx.json \
         "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json"
 fi
-
 echo "      System deps ready"
 
-# ── Step 2: Install Ollama if missing ──
+# ── Step 2: Ollama ──
 echo "[2/7] Checking Ollama..."
 if ! command -v ollama &> /dev/null; then
     echo "      Installing Ollama..."
@@ -37,7 +36,7 @@ if ! command -v ollama &> /dev/null; then
 fi
 echo "      Ollama ready"
 
-# ── Step 3: Venv + packages ──
+# ── Step 3: venv + packages ──
 echo "[3/7] Activating venv..."
 if [ ! -d "/workspace/venv" ]; then
     echo "      Creating venv..."
@@ -45,20 +44,20 @@ if [ ! -d "/workspace/venv" ]; then
     source /workspace/venv/bin/activate
     pip install -q fastapi uvicorn faster-whisper piper-tts \
         numpy soundfile requests python-dotenv twilio websockets \
-        python-multipart onnxruntime-gpu
+        python-multipart onnxruntime-gpu elevenlabs
 else
     source /workspace/venv/bin/activate
-    pip install -q python-multipart onnxruntime-gpu > /dev/null 2>&1 || true
+    pip install -q python-multipart onnxruntime-gpu elevenlabs > /dev/null 2>&1 || true
 fi
 echo "      Venv ready"
 
-# ── Step 4: Pull latest code ──
+# ── Step 4: Latest code ──
 echo "[4/7] Pulling latest code..."
 cd /workspace/healthcare-voice-agent
 git pull origin main 2>&1 | tail -1
 mkdir -p audio/output audio/input
 
-# ── Step 5: Start Ollama ──
+# ── Step 5: Ollama + model ──
 echo "[5/7] Starting Ollama (GPU)..."
 tmux kill-session -t ollama 2>/dev/null || true
 tmux new-session -d -s ollama 'ollama serve'
@@ -78,7 +77,7 @@ if ! ollama list 2>/dev/null | grep -q "qwen3:8b"; then
 fi
 echo "      qwen3:8b ready"
 
-# ── Step 6: Start ngrok ──
+# ── Step 6: ngrok ──
 echo "[6/7] Starting ngrok..."
 if [ -z "$NGROK_TOKEN" ]; then
     echo "      WARNING: NGROK_TOKEN not set"
@@ -121,10 +120,7 @@ fi
 
 export BASE_URL
 
-# ── Step 7: Start server ──
+# ── Step 7: Server ──
 echo "[7/7] Starting server..."
-echo "      STT : Whisper base (CUDA float16)"
-echo "      LLM : qwen3:8b (37/37 GPU layers)"
-echo "      TTS : Piper lessac-high (GPU/CPU)"
 cd /workspace/healthcare-voice-agent
 uvicorn src.main:app --host 0.0.0.0 --port 8000

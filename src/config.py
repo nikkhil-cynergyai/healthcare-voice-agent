@@ -19,10 +19,15 @@ AUDIO_INPUT_DIR  = "audio/input"
 PIPER_MODELS_DIR = os.getenv("PIPER_MODELS_DIR", "/workspace/piper_models")
 PIPER_VOICE      = "en_US-lessac-high"
 
-# ── Whisper STT — GPU ──
+# ── ElevenLabs TTS ──
+ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "xWEb2L4JC0YNLdSU1dxl")
+ELEVENLABS_MODEL    = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2")
+
+# ── Whisper STT ──
 WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cuda")
-WHISPER_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int8"
+WHISPER_COMPUTE = "float16"
 
 # ── Ollama LLM ──
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")

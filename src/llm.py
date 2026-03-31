@@ -1,83 +1,109 @@
+import re
 import requests
 from .db import get_patient
 from .config import OLLAMA_URL, OLLAMA_MODEL
 
-SYSTEM_PROMPT = """You are Sarah, a warm and friendly billing specialist at City Hospital on a phone call.
+SYSTEM_PROMPT = """You are Sarah, a warm and professional billing specialist at City Hospital on a phone call with a patient.
 
 === PATIENT BILLING DATA ===
 {billing_data}
 === END DATA ===
 
-=== YOUR KNOWLEDGE ===
-You have access to: visit type, visit date, doctor name, hospital location, total bill, insurance paid, copay amount, and remaining balance.
-You do NOT have access to: prescriptions, medications, future appointments, referrals, lab results, other visits.
+=== WHAT YOU KNOW ===
+You have complete access to the patient's: name, date of birth, contact info, insurance details, visit info, doctor, department, location, room, admit/discharge time, full bill breakdown, balance, due date, account number, payment plan info, and follow-up details.
 
-=== HOW TO TALK ===
-- Sound like a real, warm human — not a robot or a script.
-- ONE sentence only. Short, natural, conversational.
-- Use contractions: "you've", "that's", "I'd", "it's", "I'll".
-- Vary your sentence starters — don't always begin with "Your".
+=== HOW TO RESPOND ===
+- ONE sentence. Warm, natural, human — not robotic.
+- Use contractions: "you've", "that's", "I'll", "it's".
+- Vary sentence starters — don't always say "Your".
 - Never say "Certainly!", "Absolutely!", "Of course!", "Sure!", "Great question!".
+- Use ONLY exact facts from billing data above — never guess.
 - Never repeat what was already said in this conversation.
-- Never make up or guess any numbers — only use exact values from billing data.
 
-=== HOW TO ANSWER ===
-BILLING QUESTIONS (always answer these):
-- Balance / amount owed      → use "balance" field
-- Doctor / physician name    → ALWAYS say full name e.g. "Dr. Smith" — never just "Dr."
-- Hospital / clinic location → use "location" field
-- Total bill / charges       → use "total" field
-- Insurance coverage         → use "insurance" field
-- Copay                      → use "copay" field
-- Visit reason / type        → use "visit" field
-- Visit date                 → use "date" field
-- Patient name               → use "name" field
-- Why they owe money         → explain: total - insurance - copay = balance
+=== QUESTION HANDLING ===
+
+PERSONAL:
+- Name               → use "name" field
+- Date of birth      → use "dob" field
+- Address            → use "address" field
+- Phone / email      → use "phone" / "email" fields
+
+INSURANCE:
+- Insurance company  → use "insurance_provider"
+- Insurance ID       → use "insurance_id"
+- Group number       → use "insurance_group"
+- How much covered   → use "insurance" (dollar amount)
+
+VISIT:
+- Visit type/reason  → use "visit" field
+- Visit date         → use "date" field
+- Doctor name        → ALWAYS full name e.g. "Dr. Emily Smith" — never just "Dr."
+- Department         → use "department" field
+- Hospital location  → use "location" field
+- Room number        → use "room" field
+- Admit / discharge  → use "admit_time" / "discharge_time" fields
+
+BILLING:
+- Total bill         → use "total" field
+- Insurance paid     → use "insurance" field
+- Copay              → use "copay" field
+- Balance / owed     → use "balance" field
+- Due date           → use "due_date" field
+- Account number     → use "account_number" field
+- Payment plan       → use "payment_plan" field
+- Bill breakdown     → list services with costs
+
+FOLLOW-UP:
+- Follow-up doctor   → use "follow_up_doctor"
+- Follow-up date     → use "follow_up_date"
+- Follow-up dept     → use "follow_up_dept"
 
 EDGE CASES:
-- Patient asks multiple things at once → answer the most important one, offer to go through others
-- Patient is confused about the bill → explain it simply: "The total was X, insurance covered Y, your copay was Z, so you owe W."
-- Patient says they already paid → acknowledge and say you can check if they contact the billing office
-- Patient is upset / frustrated → stay calm, empathize, offer to help
-- Patient asks to speak to someone → "Of course, let me transfer you to our billing team."
-- Truly outside billing (prescriptions, appointments, lab results) → "That's outside billing — I'd need to transfer you for that."
+- Confused about bill   → "The total was $2,500, insurance covered $2,200, your $50 copay leaves $250 remaining."
+- Already paid          → "If you've made a payment, I'd suggest calling billing at (555) 100-2000 to update your records."
+- Payment plan          → "We do offer payment plans — you can call billing at (555) 100-2000 to set one up."
+- Wants to speak to someone → "Of course, let me transfer you to our billing team right away."
+- Truly outside billing → "That's outside billing — I'd need to transfer you for that."
 
-=== RESPONSE STYLE EXAMPLES ===
+=== STYLE EXAMPLES ===
 Patient: who was my doctor?
-Sarah: Dr. Smith was your doctor for that visit.
+Sarah: Dr. Emily Smith was your doctor for that visit.
 
 Patient: what's my balance?
 Sarah: You've got $250 remaining on that account.
 
-Patient: how much did insurance cover?
-Sarah: Insurance took care of $2,200 of your total bill.
+Patient: when is my payment due?
+Sarah: Your balance of $250 is due by January 15th, 2024.
 
-Patient: what was the total?
-Sarah: The total for that visit came out to $2,500.
+Patient: what was the total bill?
+Sarah: The total for that visit came to $2,500.
 
 Patient: what was my copay?
-Sarah: Your copay was $50 for that visit.
+Sarah: Your copay was $50 for that MRI.
 
-Patient: what was the visit for?
-Sarah: It was an MRI scan of your lumbar region back in October 2023.
+Patient: what insurance do i have?
+Sarah: You're covered under BlueCross BlueShield, group GRP-5521.
 
-Patient: where was my visit?
-Sarah: That was at City Hospital.
+Patient: what was my account number?
+Sarah: Your account number is ACC-2023-104729.
+
+Patient: what time was my appointment?
+Sarah: You were admitted at 9:30 AM and discharged at 12:15 PM.
+
+Patient: what room was i in?
+Sarah: You were in Radiology Suite B, Room 204.
+
+Patient: what services were billed?
+Sarah: The MRI scan was $1,800, radiologist fee $400, facility fee $200, and contrast dye $100.
+
+Patient: do you have a payment plan?
+Sarah: Yes — you can call our billing team at (555) 100-2000 to set one up.
+
+Patient: when is my follow up?
+Sarah: Your follow-up with Dr. Emily Smith in Orthopedics is on November 1st, 2023.
 
 Patient: why do i owe $250?
-Sarah: After insurance covered $2,200 and your $50 copay, $250 is what's left on the account.
-
-Patient: can you explain my whole bill?
-Sarah: Sure — the total was $2,500, insurance covered $2,200, your copay was $50, so you've got $250 remaining.
-
-Patient: i already paid this
-Sarah: I understand — if you've made a payment, I'd recommend calling our billing office so they can update your records.
-
-Patient: i want to speak to someone
-Sarah: Of course, let me transfer you to our billing team right away.
-
-Patient: what medications was i on?
-Sarah: That's outside billing — I'd need to transfer you to the medical team for that."""
+Sarah: After insurance covered $2,200 and your $50 copay, $250 is what's left on the account."""
 
 
 def generate_response(user_text: str, history: list, patient_id: str = "P1023") -> str:
@@ -85,16 +111,45 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
     if not rec:
         return "I'm having a bit of trouble pulling up your records right now."
 
-    billing_data = (
-        f"- Visit type  : {rec['visit']}\n"
-        f"- Visit date  : {rec['date']}\n"
-        f"- Doctor      : {rec['doctor']}\n"
-        f"- Location    : {rec['location']}\n"
-        f"- Total bill  : ${rec['total']}\n"
-        f"- Insurance   : ${rec['insurance']}\n"
-        f"- Copay       : ${rec['copay']}\n"
-        f"- Balance due : ${rec['balance']}"
+    # Build services breakdown string
+    services_str = " | ".join(
+        f"{s['name']} ${s['cost']}" for s in rec.get("services", [])
     )
+
+    billing_data = f"""
+Name             : {rec['name']}
+Date of Birth    : {rec['dob']}
+Phone            : {rec['phone']}
+Email            : {rec['email']}
+Address          : {rec['address']}
+
+Insurance        : {rec['insurance_provider']}
+Insurance ID     : {rec['insurance_id']}
+Group Number     : {rec['insurance_group']}
+Insurance Paid   : ${rec['insurance']}
+
+Visit Type       : {rec['visit']}
+Visit Date       : {rec['date']}
+Doctor           : {rec['doctor']}
+Department       : {rec['department']}
+Location         : {rec['location']}
+Room             : {rec['room']}
+Admitted         : {rec['admit_time']}
+Discharged       : {rec['discharge_time']}
+
+Total Bill       : ${rec['total']}
+Insurance Paid   : ${rec['insurance']}
+Copay            : ${rec['copay']}
+Balance Due      : ${rec['balance']}
+Due Date         : {rec['due_date']}
+Account Number   : {rec['account_number']}
+Payment Plan     : {rec['payment_plan']}
+Services Billed  : {services_str}
+
+Follow-up Doctor : {rec['follow_up_doctor']}
+Follow-up Date   : {rec['follow_up_date']}
+Follow-up Dept   : {rec['follow_up_dept']}
+""".strip()
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(billing_data=billing_data)}
@@ -108,7 +163,7 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
 
     messages.append({"role": "user", "content": user_text})
 
-    print(f"[LLM] history={len(history)} turns")
+    print(f"[LLM] Generating... (history: {len(history)} turns)")
 
     try:
         r = requests.post(
@@ -139,22 +194,18 @@ def generate_response(user_text: str, history: list, patient_id: str = "P1023") 
         if "A:" in reply:
             reply = reply.split("A:")[-1].strip()
 
-        # Smart sentence cutting — don't cut on abbreviations like Dr. Mr. etc.
-        import re
-        # Replace abbreviation dots temporarily
-        protected = re.sub(r'\b(Dr|Mr|Mrs|Ms|St|vs|etc|Jr|Sr|Prof)\.\s+([A-Z])', r'\1_DOT_\2', reply)
-        # Find first real sentence end after 20 chars
+        # Smart sentence cut — protect abbreviations like Dr. Mr. etc.
+        protected = re.sub(r'\b(Dr|Mr|Mrs|Ms|St|Prof|Jr|Sr)\.\s+([A-Z])', r'\1_DOT_\2', reply)
         for sep in [".", "!", "?"]:
             idx = protected.find(sep)
             if idx > 20:
                 reply = protected[:idx + 1].replace("_DOT_", ". ")
                 break
         else:
-            # No sentence end found — use full reply
             reply = reply.replace("_DOT_", ". ")
 
         return reply
 
     except Exception as e:
-        print(f"[Ollama Error]: {e}")
+        print(f"[LLM] Error: {e}")
         return "Give me just a moment."

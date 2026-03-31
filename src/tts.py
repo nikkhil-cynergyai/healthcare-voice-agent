@@ -2,84 +2,82 @@ import os
 import uuid
 import wave
 import threading
-from .config import AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE
+from .config import (
+    AUDIO_OUTPUT_DIR, PIPER_MODELS_DIR, PIPER_VOICE,
+    ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, ELEVENLABS_MODEL
+)
 
-MISTRAL_API_KEY  = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_VOICE_ID = os.getenv("MISTRAL_VOICE_ID", "sarah")  # default voice
+# ── ElevenLabs TTS ──
+_use_elevenlabs = False
+_eleven_client  = None
 
-# ── Try Voxtral TTS first ──
-_use_mistral   = False
-_mistral_client = None
-
-if MISTRAL_API_KEY:
+if ELEVENLABS_API_KEY:
     try:
-        from mistralai import Mistral
-        _mistral_client = Mistral(api_key=MISTRAL_API_KEY)
-        _use_mistral    = True
-        print("[TTS] Voxtral TTS (Mistral) ready ✅")
+        from elevenlabs.client import ElevenLabs
+        _eleven_client  = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+        _use_elevenlabs = True
+        print(f"[TTS] ElevenLabs ready (voice: {ELEVENLABS_VOICE_ID})")
     except Exception as e:
-        print(f"[TTS] Mistral failed: {e} — falling back to Piper")
+        print(f"[TTS] ElevenLabs failed: {e} — using Piper")
 
-# ── Piper fallback ──
+# ── Piper TTS fallback ──
 _piper_voice = None
 
-if not _use_mistral:
+if not _use_elevenlabs:
     try:
         from piper import PiperVoice
         _MODEL_PATH = os.path.join(PIPER_MODELS_DIR, f"{PIPER_VOICE}.onnx")
+
         if os.path.exists(_MODEL_PATH):
             try:
                 _piper_voice = PiperVoice.load(_MODEL_PATH, use_cuda=True)
-                print("[TTS] Piper ready ✅ (GPU)")
+                print("[TTS] Piper ready (GPU)")
             except Exception:
                 _piper_voice = PiperVoice.load(_MODEL_PATH, use_cuda=False)
-                print("[TTS] Piper ready ✅ (CPU)")
+                print("[TTS] Piper ready (CPU)")
 
             def _prewarm():
                 try:
                     with wave.open("/tmp/piper_prewarm.wav", "wb") as f:
                         _piper_voice.synthesize_wav("hello", f)
-                    print("[TTS] Pre-warmed ✅")
+                    print("[TTS] Piper pre-warmed")
                 except Exception as e:
                     print(f"[TTS] Pre-warm failed: {e}")
 
             threading.Thread(target=_prewarm, daemon=True).start()
         else:
             print(f"[TTS] Piper model not found: {_MODEL_PATH}")
+
     except Exception as e:
         print(f"[TTS] Piper failed: {e}")
 
 
 def synthesize_speech(text: str) -> str:
-    """Convert text to WAV. Uses Voxtral TTS if available, else Piper."""
+    """Convert text to WAV. Uses ElevenLabs if available, else Piper."""
     if not text or not text.strip():
         return ""
 
     os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
     file_path = os.path.join(AUDIO_OUTPUT_DIR, f"tts_{uuid.uuid4().hex}.wav")
 
-    # ── Voxtral TTS ──
-    if _use_mistral and _mistral_client:
+    # ── ElevenLabs ──
+    if _use_elevenlabs and _eleven_client:
         try:
-            response = _mistral_client.audio.speech.create(
-                model="voxtral-tts",
-                voice=MISTRAL_VOICE_ID,
-                input=text,
-                response_format="pcm",   # raw PCM — fastest
+            audio = _eleven_client.text_to_speech.convert(
+                voice_id=ELEVENLABS_VOICE_ID,
+                text=text,
+                model_id=ELEVENLABS_MODEL,
+                output_format="pcm_22050",
             )
-
-            # Write PCM → WAV
-            pcm_data = response.read()
+            pcm_data = b"".join(audio)
             with wave.open(file_path, "wb") as wf:
                 wf.setnchannels(1)
-                wf.setsampwidth(2)       # 16-bit
-                wf.setframerate(22050)   # 22kHz
+                wf.setsampwidth(2)
+                wf.setframerate(22050)
                 wf.writeframes(pcm_data)
-
             return file_path
-
         except Exception as e:
-            print(f"[Voxtral TTS Error]: {e} — falling back to Piper")
+            print(f"[TTS] ElevenLabs error: {e} — falling back to Piper")
 
     # ── Piper fallback ──
     if _piper_voice:
@@ -88,6 +86,6 @@ def synthesize_speech(text: str) -> str:
                 _piper_voice.synthesize_wav(text, wf)
             return file_path
         except Exception as e:
-            print(f"[Piper Error]: {e}")
+            print(f"[TTS] Piper error: {e}")
 
     return ""

@@ -2,9 +2,9 @@ import numpy as np
 from faster_whisper import WhisperModel
 from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE
 
-print(f"[Whisper STT] Loading {WHISPER_MODEL} on {WHISPER_DEVICE} ({WHISPER_COMPUTE})...")
+print(f"[STT] Loading Whisper {WHISPER_MODEL} on {WHISPER_DEVICE}...")
 _model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
-print("[Whisper STT] Model ready ✅ (GPU)")
+print(f"[STT] Whisper ready on {WHISPER_DEVICE.upper()}")
 
 
 def mulaw_to_pcm16(mulaw_bytes: bytes) -> np.ndarray:
@@ -16,7 +16,7 @@ def mulaw_to_pcm16(mulaw_bytes: bytes) -> np.ndarray:
 
 
 def transcribe_chunks(audio_chunks: list) -> str:
-    """Transcribe buffered audio chunks using Whisper GPU."""
+    """Transcribe buffered audio chunks using Whisper."""
     if not audio_chunks:
         return ""
 
@@ -36,5 +36,5 @@ def transcribe_chunks(audio_chunks: list) -> str:
         )
         return " ".join(seg.text for seg in segments).strip().lower()
     except Exception as e:
-        print(f"[Whisper STT Error]: {e}")
+        print(f"[STT] Error: {e}")
         return ""
