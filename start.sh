@@ -47,7 +47,7 @@ if [ ! -d "/workspace/venv" ]; then
         python-multipart onnxruntime-gpu elevenlabs
 else
     source /workspace/venv/bin/activate
-    pip install -q python-multipart onnxruntime-gpu elevenlabs > /dev/null 2>&1 || true
+    pip install -q python-multipart onnxruntime-gpu elevenlabs faster-whisper --upgrade > /dev/null 2>&1 || true
 fi
 echo "      Venv ready"
 
