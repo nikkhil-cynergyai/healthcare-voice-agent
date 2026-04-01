@@ -134,7 +134,7 @@ async def voice(request: Request):
     print(f"{'='*42}")
 
     greeting = synthesize_speech(
-        "Hi, this is Sarah from City Hospital billing. How can I help you today?"
+        "Hi, this is Priya from City Hospital billing. How can I help you today?"
     )
     return Response(
         twiml_play_and_stream(f"{BASE_URL}/{greeting}"),
@@ -244,7 +244,7 @@ async def _reply(call_sid: str, user_text: str, t: Timer):
     reply = await asyncio.to_thread(generate_response, user_text, session["history"])
     t.end("LLM")
 
-    session["history"].append(f"Sarah: {reply}")
+    session["history"].append(f"Priya: {reply}")
     print(f"[SARAH] '{reply}'")
 
     t.start("TTS")
@@ -278,5 +278,6 @@ async def call_status(request: Request):
     status   = form.get("CallStatus", "")
     print(f"[CALL] {call_sid[:20]}... → {status}")
     if status in ("completed", "failed", "busy", "no-answer"):
+        
         clear_session(call_sid)
     return Response("", status_code=204)
