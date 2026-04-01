@@ -2,9 +2,27 @@ import numpy as np
 from faster_whisper import WhisperModel
 from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE
 
-print(f"[STT] Loading Whisper {WHISPER_MODEL} on {WHISPER_DEVICE}...")
-_model = WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type=WHISPER_COMPUTE)
-print(f"[STT] Whisper ready on {WHISPER_DEVICE.upper()}")
+# Distil-Whisper models need special handling
+_DISTIL_MODELS = {"distil-large-v3", "distil-large-v2", "distil-medium.en", "distil-small.en"}
+_is_distil = WHISPER_MODEL in _DISTIL_MODELS
+
+print(f"[STT] Loading {WHISPER_MODEL} on {WHISPER_DEVICE}...")
+
+if _is_distil:
+    # Distil-Whisper from HuggingFace
+    _model = WhisperModel(
+        f"distil-whisper/{WHISPER_MODEL}",
+        device=WHISPER_DEVICE,
+        compute_type=WHISPER_COMPUTE
+    )
+else:
+    _model = WhisperModel(
+        WHISPER_MODEL,
+        device=WHISPER_DEVICE,
+        compute_type=WHISPER_COMPUTE
+    )
+
+print(f"[STT] Ready — {WHISPER_MODEL} on {WHISPER_DEVICE.upper()}")
 
 
 def mulaw_to_pcm16(mulaw_bytes: bytes) -> np.ndarray:
@@ -16,7 +34,7 @@ def mulaw_to_pcm16(mulaw_bytes: bytes) -> np.ndarray:
 
 
 def transcribe_chunks(audio_chunks: list) -> str:
-    """Transcribe buffered audio chunks using Whisper."""
+    """Transcribe buffered audio chunks."""
     if not audio_chunks:
         return ""
 
@@ -32,7 +50,9 @@ def transcribe_chunks(audio_chunks: list) -> str:
             beam_size=1,
             best_of=1,
             vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=200)
+            vad_parameters=dict(min_silence_duration_ms=200),
+            # Distil-Whisper specific — better accuracy
+            condition_on_previous_text=False,
         )
         return " ".join(seg.text for seg in segments).strip().lower()
     except Exception as e:

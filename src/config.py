@@ -25,7 +25,7 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "xWEb2L4JC0YNLdSU1dxl")
 ELEVENLABS_MODEL    = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2")
 
 # ── Whisper STT ──
-WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "distil-large-v3")
 WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cuda")
 WHISPER_COMPUTE = "float16"
 
