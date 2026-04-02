@@ -28,9 +28,9 @@ ELEVENLABS_MODEL    = os.getenv("ELEVENLABS_MODEL", "eleven_turbo_v2")
 
 # ── Whisper STT ──
 # WHISPER_DEVICE: "cuda" for GPU (RunPod), "cpu" for Mac
-WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL   = os.getenv("WHISPER_MODEL", "distil-large-v2")
 WHISPER_DEVICE  = os.getenv("WHISPER_DEVICE", "cuda")
-WHISPER_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int8"
+WHISPER_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int16"
 
 # ── Ollama LLM ──
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
